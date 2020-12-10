@@ -1,0 +1,389 @@
+---
+title: "MA678 Final Project"
+subtitle: "EDA, Feature Engineering and Model"
+author: "Chenghao Meng"
+date: "2020/12/1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,data.table,lubridate,magrittr,MASS,arm)
+```
+
+# 2 EDA and Feature Engineering
+## 2.1 Explortary Data Analysis
+```{r}
+# Load the data without missing value
+df <- fread(file = "C:/Users/CH.Meng/Desktop/MA678-Final project/hotel_imp2.csv")
+
+# Date time transformation using lubridate
+df$date_time <- as_datetime(df$date_time)
+df$srch_ci <- as_datetime(df$srch_ci)
+df$srch_co <- as_datetime(df$srch_co)
+
+# Categorical transformation
+df %<>% 
+  dplyr::mutate_at(vars(
+    c(site_name,posa_continent,user_location_country,
+      user_location_region, user_location_city, user_id, 
+      channel, srch_destination_id,srch_destination_type_id,
+      hotel_continent,hotel_country,hotel_market,hotel_cluster)),~as.character(.))
+```
+
+### 2.1.1 Hotel-related
+
+Which Hotel is most frequently booked?
+
+```{r message=FALSE, warning=FALSE}
+df %>% dplyr::select(is_booking,hotel_cluster) %>% 
+  dplyr::filter(is_booking == 1) %>% 
+  group_by(hotel_cluster) %>% 
+  summarise(num=n()) %>% 
+  arrange(desc(num)) %>% 
+  
+  # Top 10 booking hotel
+  head(10) %>% ggplot() + 
+  geom_bar(aes(x=reorder(hotel_cluster,num),y=num,fill=hotel_cluster),stat = "identity") + 
+  scale_fill_brewer(palette = "PuOr") + 
+  xlab("Hotel Cluster") + ylab("Frequency") + 
+  ggtitle("Top 10 Most Frequently Booked Hotels",subtitle = "From Jan. 2013 to Dec. 2014") + 
+  labs(fill="Hotel Cluster")+
+  coord_flip()
+```
+
+Which is the most popular continent and country?
+
+```{r message=FALSE, warning=FALSE}
+# Bar plot: Hotel Continent
+p_hotel_cont <- df %>% dplyr::select(is_booking,hotel_continent) %>% 
+  group_by(hotel_continent) %>% summarise(num=n()) %>% 
+  arrange(desc(num)) %>% 
+  
+  # Make the graph
+  ggplot() + 
+  geom_bar(aes(x=reorder(hotel_continent,num),y=num,fill=hotel_continent),stat = "identity") + 
+  scale_fill_brewer(palette = "PuOr") + 
+  xlab("Continent ID") + ylab("Number of Clicks") + 
+  ggtitle("Clicks Frquency: Hotel Continent",subtitle = "From Jan. 2013 to Dec. 2014") + 
+  labs(fill="Continent ID") + coord_flip()
+p_hotel_cont
+```
+
+```{r message=FALSE, warning=FALSE}
+# Bar plot: Top 10 Country
+p_hotel_coun <- df %>% 
+  dplyr::select(is_booking,hotel_country) %>% 
+  group_by(hotel_country) %>% summarise(num=n()) %>% 
+  arrange(desc(num)) %>% head(10) %>% 
+  
+  # Make the graph
+  ggplot() + 
+  geom_bar(aes(x=reorder(hotel_country,num),y=num,fill=hotel_country),stat = "identity") + 
+  scale_fill_brewer(palette = "PuOr") + 
+  xlab("Country ID") + ylab("Number of Clicks") + 
+  ggtitle("Clicks Frquency: Top 10 Hotel Countries",subtitle = "From Jan. 2013 to Dec. 2014") + 
+  labs(fill="Country ID") + coord_flip()
+p_hotel_coun
+```
+
+### 2.1.2 User-related
+
+#### Who booked hotel most frequently?
+
+```{r message=FALSE, warning=FALSE}
+df %>% dplyr::filter(is_booking==1) %>% 
+  dplyr::select(user_id,is_booking) %>% 
+  group_by(user_id) %>% summarise(num=n()) %>%
+  arrange(desc(num)) %>% top_n(5,num) %>% 
+  
+  ggplot() + 
+  geom_bar(aes(x=reorder(user_id,num),y=num),stat="identity",fill="royalblue",alpha=0.7)+
+  xlab("User ID") + ylab("Number of Hotel Booking") + 
+  ggtitle("Top 5 Users for Number of Hotel Booking",subtitle = "From Jan. 2013 to Dec. 2014") + 
+  coord_flip()
+```
+
+
+#### Which country's user has the most hotel bookings?
+
+```{r message=FALSE, warning=FALSE}
+df %>% dplyr::select(is_booking,user_location_country) %>% 
+  dplyr::filter(is_booking == 1) %>% 
+  group_by(user_location_country) %>% 
+  summarise(num=n()) %>% 
+  arrange(desc(num)) %>% 
+  
+  head(10) %>% ggplot() + 
+  geom_bar(aes(x=reorder(user_location_country,num),y=num,fill=user_location_country),stat = "identity") + 
+  scale_fill_brewer(palette = "RdYlBu") + 
+  xlab("Country ID the User is Located") + ylab("Frequency") + 
+  ggtitle("Top 10 Countries for Number of Hotel Bookings per User",subtitle = "From Jan. 2013 to Dec. 2014") + 
+  labs(fill="Country ID")+ coord_flip() 
+```
+
+#### Which hotel cluster the users from Top 5 countries for number of hotel bookings per user prefers to book?
+
+```{r message=FALSE, warning=FALSE}
+user_country_hotel <- df %>% 
+  dplyr::select(is_booking,user_location_country,hotel_cluster) %>%
+  dplyr::filter(is_booking==1,user_location_country==c("66","205","69","3","46")) %>% 
+  group_by(user_location_country,hotel_cluster) %>% 
+  summarise(num=n()) %>% 
+  arrange(desc(num)) 
+```
+
+```{r}
+# Top 5 hotel cluster the User from Top 5 countries for number of hotel bookings per user prefers to book
+user_country66_hotel <- user_country_hotel %>% 
+  filter(user_location_country=="66") %>% head(5)
+
+user_country205_hotel <- user_country_hotel %>% 
+  filter(user_location_country=="205") %>% head(5)
+
+user_country69_hotel <- user_country_hotel %>% 
+  filter(user_location_country=="69") %>% head(5)
+
+user_country3_hotel <- user_country_hotel %>% 
+  filter(user_location_country=="3") %>% head(5)
+
+user_country46_hotel <- user_country_hotel %>% 
+  filter(user_location_country=="46") %>% head(5)
+
+user_country_hotel2 <- rbind(user_country66_hotel,user_country205_hotel,user_country69_hotel,user_country3_hotel,user_country46_hotel)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+ggplot(data=user_country_hotel2) + 
+  geom_bar(aes(x=reorder(hotel_cluster,num),y=num,fill=user_location_country),stat = "identity") + 
+  scale_fill_brewer(palette = "RdYlBu") +
+  facet_wrap(~user_location_country,scales= "free") +
+  
+  xlab("Hotel Cluster") + ylab("Frequency") + 
+  labs(fill="Country ID")+
+  ggtitle("Top 5 Popular Hotel Clusters",
+  subtitle = "For Users in Top 5 Countris for Number of Hotel Booking per User,\nFrom Jan. 2013 to Dec. 2014") + 
+  coord_flip()
+```
+
+#### Which destination the users like most?
+
+```{r message=FALSE, warning=FALSE}
+df %>% 
+  dplyr::select(is_booking,srch_destination_id) %>% 
+  group_by(srch_destination_id) %>% 
+  summarise(num=n()) %>% arrange(desc(num)) %>% 
+  
+  head(10) %>% ggplot() + 
+  geom_point(aes(x=reorder(srch_destination_id,num),y=num,size=num),alpha=0.7,col="royalblue") + 
+  scale_size(range = c(3,9.5)) +
+  xlab("Destination ID") + ylab("Frequency") + 
+  ggtitle("Top 10 Popular Destinations in Hotel Search",
+          subtitle = "From Jan. 2013 to Dec. 2014") +
+  guides(size=F)
+```
+
+### 2.1.3 Expedia-related
+
+#### Daily Active User
+```{r message=FALSE, warning=FALSE}
+# Daily Active User
+df %>% mutate(date=ymd(as.Date(df$date_time))) %>%
+  dplyr::select(date,posa_continent,is_booking) %>% 
+  group_by(date,posa_continent) %>% 
+  summarise(user_num=n()) %>% ungroup() %>% 
+  # Draw line chart
+  ggplot() + 
+  geom_line(aes(x=date,y=user_num,col=posa_continent)) +
+  scale_color_brewer(palette = "Set2")+
+  xlab("Date") + ylab("Number of User") +
+  labs(col="Continent ID \nof the Website")+
+  ggtitle("Daily Active User on Expedia by Continent",subtitle = "From Jan. 2013 to Dec. 2014")
+```
+
+#### Booking Channel
+
+```{r message=FALSE, warning=FALSE}
+df %>% dplyr::filter(is_booking==1) %>% 
+  dplyr::select(channel,is_booking) %>% 
+  group_by(channel) %>% 
+  summarise(num=n()) %>% 
+  top_n(5,num) %>% 
+  arrange(desc(num)) %>% 
+  
+  ggplot()+
+  geom_bar(aes(x=reorder(channel,num),y=num,fill=channel),stat = "identity")+
+  scale_fill_brewer(palette = "Set2")+
+  xlab("Channel ID") + ylab("Number of Booking")+
+  ggtitle("Top 5 Channel of Hotel Booking",subtitle = "From Jan. 2013 to Dec. 2014")+
+  labs(fill="Channel ID")+
+  coord_flip()
+```
+
+#### How many user used package to book hotel?
+```{r message=FALSE, warning=FALSE}
+df %>% dplyr::filter(is_booking==1) %>% 
+  dplyr::select(is_package,hotel_cluster) %>% 
+  filter(hotel_cluster %in% c("91","48","42","59","28")) %>% 
+  group_by(hotel_cluster,is_package) %>% 
+  summarise(num=n()) %>% 
+  
+ggplot()+
+  geom_bar(aes(x=as.character(is_package),y=num,fill=hotel_cluster),stat="identity")+
+  facet_wrap(~hotel_cluster,scales = "free")+
+  scale_fill_brewer(palette = "Set2") +
+  xlab("Package Using Status")+ylab("Frequency")+
+  labs(fill="Hotel Cluster") +
+  ggtitle("Package Using Status of Top 5 Popular Hotel Clusters",subtitle = "From Jan. 2013 to Dec. 2014") + 
+  coord_flip()
+```
+
+#### How many user used mobile to book hotel?
+```{r message=FALSE, warning=FALSE}
+df %>% dplyr::filter(is_booking==1) %>% 
+  dplyr::select(is_mobile,hotel_cluster) %>% 
+  filter(hotel_cluster %in% c("91","48","42","59","28")) %>% 
+  group_by(hotel_cluster,is_mobile) %>% 
+  summarise(num=n()) %>% 
+  
+ggplot()+
+  geom_bar(aes(x=as.character(is_mobile),y=num,fill=hotel_cluster),stat="identity")+
+  facet_wrap(~hotel_cluster,scales = "free")+
+  scale_fill_brewer(palette = "Set2") +
+  xlab("Mobile Using Status")+ylab("Frequency")+
+  labs(fill="Hotel Cluster") +
+  ggtitle("Mobile Using Status of Top 5 Popular Hotel Clusters",subtitle = "From Jan. 2013 to Dec. 2014") + 
+  coord_flip()
+```
+
+## 2.2 Feature Engineering
+
+### 2.2.1 Feature Establishment
+ - Duration of Stay: stay_duration
+Since `srch_ci` denotes check-in date and `srch_co` denotes check-out date, the duration of stay would be a feature of interest to explore users' hotel booking behavior.
+
+```{r}
+# Stay Duration
+df2 <- df %>% 
+  mutate(stay_duration=
+           as.Date(df$srch_co)-as.Date(df$srch_ci)) %>% 
+  dplyr::select(-c(srch_ci,srch_co)) %>%
+  mutate(stay_duration=as.numeric(stay_duration))
+```
+
+ - Hotel Rank: hotel_rank
+Meanwhile, since the number of hotel cluster is relatively large (100 hotel clusters), we would like to transform it into a 10-point scale based on the number of booking for the simplicity of the analysis. 
+
+If hotel cluster ID equals to top 10 frequently booked hotel, then it would be ranked as 10. If hotel cluster ID equals to top 11-20 frequently booked hotel, it would be ranked as 9.If hotel cluster ID equals to top 11-30 frequently booked hotel, it would be ranked as 8. The rest of the ranking will do as above. 
+```{r message=FALSE, warning=FALSE}
+hotel_booking <- df %>% 
+  dplyr::select(is_booking,hotel_cluster) %>% 
+  dplyr::filter(is_booking == 1) %>% 
+  group_by(hotel_cluster) %>% 
+  summarise(num=n()) %>% 
+  arrange(desc(num))
+```
+
+
+```{r}
+# Hotel ranking
+df2$hotel_rank <- rep(NA,nrow(df2))
+
+df2$hotel_rank <- ifelse(df2$hotel_cluster%in% hotel_booking$hotel_cluster[1:10],10,
+                         ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[11:20],9,
+                                ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[21:30],8,
+                                       ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[31:40],7,
+                                              ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[41:50],6,
+                                                     ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[51:60],5,
+                                                            ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[61:70],4,
+                                                              ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[71:80],3,
+                                                              ifelse(df2$hotel_cluster%in%hotel_booking$hotel_cluster[81:90],2,1)))))))))
+
+```
+
+
+### 2.2.2 Feature Selection
+
+Since **site_name** and **posa_continent** in the dataset all reflect which continent the users are based, and posa_continent has similar structure as **hotel_continent**, the posa_continent will be chosen for the modelling part.
+
+Meanwhile, if the user has children that are needed to be placed in a seprate room, it will reflect in the **srch_rm_cnt**, so we will choose this column and drop **srch_adults_cnt** and **srch_children_cnt**.
+
+Because the meaning of **hotel_market** and **srch_destination_type_id** are not specified in the data description part on Kaggle, those columns will also be dropped for interpretability of the variable.
+
+What's more, user has city-level feature **user_location_city** and region-level feature **user_location_region**, however, hotel only have continent feature **hotel_continent** and country-level feature **hotel_country**, so **user_location_city** and **user_location_region** will be dropped for the correpondence of the features. Morover,**date_time** will also be dropped for the simplicity of the model.
+
+
+```{r}
+df_final <- df2 %>%
+  dplyr::filter(is_booking==1) %>% 
+  dplyr::select(-c(hotel_cluster,date_time,is_booking,hotel_market,site_name,srch_children_cnt,srch_adults_cnt,user_location_city,user_location_region,srch_destination_type_id)) 
+```
+
+```{r}
+set.seed(678)
+df_final <- df_final %>% sample_frac(0.5,replace = F)
+```
+
+```{r}
+colnames(df_final)
+```
+
+# 3 Model
+## 3.1 Model Establishment
+```{r}
+# fit the model
+fit <- polr(ordered(hotel_rank)~user_location_country + posa_continent + orig_destination_distance  + hotel_continent+ is_mobile + is_package  + srch_rm_cnt  + cnt + channel+  stay_duration,data=df_final,Hess = T)
+```
+
+```{r}
+display(fit)
+```
+
+Visualize the model
+```{r}
+predx<-expand.grid(
+  user_location_country=unique(df_final$user_location_country),
+  posa_continent=unique(df_final$posa_continent),
+  orig_destination_distance=mean(df_final$orig_destination_distance),
+  hotel_continent=unique(df_final$hotel_continent),
+  is_mobile=0,is_package=0,
+  srch_rm_cnt=mean(df_final$srch_rm_cnt),
+  cnt=mean(df_final$cnt),
+  channel=unique(df_final$channel),
+  stay_duration=mean(df_final$stay_duration))
+predy<-predict(fit,newdata=predx,type="prob")
+```
+
+```{r message=FALSE, warning=FALSE}
+resd<-data.frame(predx[,c("user_location_country","posa_continent","orig_destination_distance","hotel_continent","is_mobile","is_package","srch_rm_cnt","cnt","channel","stay_duration")],hotel_rank=predy)
+
+ggplot(melt(resd,id.var=c(c("user_location_country","posa_continent","orig_destination_distance","hotel_continent","is_mobile","is_package","srch_rm_cnt","cnt","channel","stay_duration"))))+
+geom_bar(position = "fill",stat="identity")+
+aes(x=hotel_continent,y=value,fill=variable)+
+facet_grid(~posa_continent)+
+theme(axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_text(angle = 45, hjust = 1))+
+ggtitle("Probability by posa_continent")
+```
+
+## 3.2 Model Checking
+```{r}
+obsmat <- model.matrix(~ordered(hotel_rank)-1,data=df_final)
+resdimat<-obsmat-fitted(fit)
+```
+
+```{r}
+par(mfrow=c(2,5))
+binnedplot(fitted(fit)[,1],resdimat[,1])
+binnedplot(fitted(fit)[,2],resdimat[,2])
+binnedplot(fitted(fit)[,3],resdimat[,3])
+binnedplot(fitted(fit)[,4],resdimat[,4])
+binnedplot(fitted(fit)[,5],resdimat[,5])
+binnedplot(fitted(fit)[,6],resdimat[,6])
+binnedplot(fitted(fit)[,7],resdimat[,7])
+binnedplot(fitted(fit)[,8],resdimat[,8])
+binnedplot(fitted(fit)[,9],resdimat[,9])
+binnedplot(fitted(fit)[,10],resdimat[,10])
+```
+
