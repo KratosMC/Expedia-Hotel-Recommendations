@@ -1,0 +1,32 @@
+---
+title: "Data Processing"
+author: "Chenghao Meng"
+date: "2020/11/28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Load the package to process large dataset
+library(data.table)
+library(tidyverse)
+```
+
+```{r}
+dt <- fread(file = "C:/Users/CH.Meng/Desktop/MA678-Final project/train.csv",header=T)
+dim(dt)
+```
+Since the original dataset on Kaggle is very large,having 37,670,293 rows, only apart of it will be used for further analysis.
+```{r}
+# Extract from the dataset
+mydata <- dt %>% sample_n(200000,replace = F)
+```
+
+
+```{r}
+write.csv(mydata,file = "C:/Users/CH.Meng/Desktop/MA678-Final project/hotel.csv",row.names = F)
+```
+
