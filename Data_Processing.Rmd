@@ -1,0 +1,148 @@
+---
+title: "MA678 Final Project"
+subtitle: "Data Processing"
+author: "Chenghao Meng"
+date: "2020/11/28"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load packages
+pacman::p_load(tidyverse,data.table,lubridate,magrittr,mice)
+```
+
+# 1 Data Processing
+## 1.1 Initial Processing
+First, we will take a look at the dataset to prepare for further data processing. To take an initial exploration of the dataset, we will use the `summary` function.
+
+For the description of each column, please visit <\a href="https://www.kaggle.com/c/expedia-hotel-recommendations/data"> .
+
+```{r}
+# Load the data
+dt <- fread(file = "hotel.csv",header = T)
+
+summary(dt)
+```
+
+The information in the data description indicates that column **date_time**, **srch_ci** and **srch_co** should be in date time format. 
+
+Meanwhile, column **site_name**, **posa_continent**, **user_location_country**, **user_location_region**, **user_location_city**, **user_id**, **channel**, **srch_destination_id**, **srch_destination_type_id**, **hotel_continent**, **hotel_country**, **hotel_market** and **hotel_cluster** should be in categorical format.
+
+Apart from that, we have also noticed that the column **orig_destination_distance**, which means "Physical distance between a hotel and a customer at the time of search", contains a lot of NAs, and NA in this column denotes that "the distance could not be calculated".
+
+As a result, the following steps are needed to be taken in the initial processing: 
+
+ - Data transformation is needed to be done on the relevent columns mentioned above
+ 
+ - Imputation is needed to be done on the column **orig_destination_distance**, **srch_ci** and **srch_co** .
+
+### 1.1.1 Data Transformation
+
+For column **date_time**, **srch_ci** and **srch_co**, we will use the **date_time** function in `lubridate` package to conduct the transformation.
+
+```{r}
+# Date time transformation using lubridate
+dt$date_time <- as_datetime(dt$date_time)
+dt$srch_ci <- as_datetime(dt$srch_ci)
+dt$srch_co <- as_datetime(dt$srch_co)
+```
+
+For those columns that needed to be transformed into categorical variables, since there are many of them, we will use the `mutate_at` function in `dplyr` from `tidyverse` package to transform them all at once.
+
+```{r}
+# Categorical transformation
+dt %<>% 
+  dplyr::mutate_at(vars(
+    c(site_name,posa_continent,user_location_country,
+      user_location_region, user_location_city, user_id, 
+      channel, srch_destination_id,srch_destination_type_id,
+      hotel_continent,hotel_country,hotel_market,hotel_cluster)),~as.character(.))
+```
+
+### 1.1.2 Imputation
+
+Before the imputation of the column **orig_destination_distance**, we will check the detail of this column.
+
+```{r}
+# Compute the percentage of NA
+percent_na <- sum(is.na(dt$orig_destination_distance))/length(dt$orig_destination_distance)
+
+cat(paste("There are",paste0(format(percent_na*100,digits = 4),"%"),"of the data in this column contain NAs."))
+```
+
+The result above shows that about 35% of the data in the column **orig_destination_distance** contain NAs. Since the missing of data may be due to users' unwillingness to give company access to their geographic locations, deleting the rows with NAs is not a good approach to address this problem. To address the problem, we will check the distribution of this column first.
+
+```{r}
+# Density plot
+options(scipen = 100) # Swith off Scientific notation
+p <- ggplot(data = dt,aes(x = orig_destination_distance)) + 
+  geom_density(na.rm = T) + 
+  geom_vline(data = 
+               data.frame(ave=mean(dt$orig_destination_distance,na.rm = T)),aes(xintercept = ave),linetype = "dashed",col="lightseagreen")
+
+p + ggtitle("Density Plot of orig_destination_distance",
+            subtitle = "Physical distance between a hotel and a customer at the time of search")
+```
+
+The density plot implies that using the mean of column **orig_destination_distance** to impute the missing value is not appropriate since the distribution is not normal. So, we will use the `mice` function in `mice` package to impute the missing value.
+
+Meanwhile, since we have 200,000 rows and 24 columns in the dataset, using all the columns to predict the missing value on a normal local machine is not a doable plan. As a result, we will first select the columns that relates to **orig_destination_distance**, which means "Physical distance between a hotel and a customer at the time of search".
+
+```{r}
+# Select the relevant columns(features)
+dt2 <- select(dt,c(user_location_country,orig_destination_distance,srch_destination_id,hotel_continent,hotel_country))
+```
+
+Since all the relevant columns are categorical, we will use the Classification and Regression Trees method (CART) in the `mice` function to fill the missing value. To include the imputed data, we will set up an empty data frame first.
+
+```{r}
+# Build an empty data frame
+hotel <- data.frame(
+  user_location_country = NA,user_location_region = NA,
+  user_location_city = NA,orig_destination_distance = NA,
+  srch_destination_id = NA,srch_destination_type_id= NA,
+  hotel_continent = NA, hotel_country = NA)
+hotel <- hotel[-1,]
+```
+
+Due to the fact that the local machine cannot process all 200,000 rows at once, we will divide the dataset into 20 patches, and there will be 10,000 rows in each patch by using the for loop.
+
+```{r}
+# Divide the dataset into patches
+steps <- 10000
+for (i in 1:20){
+  imp <- mice(dt2[seq((steps*i)-9999,steps*i),], method="cart",seed = 1,printFlag=F)
+  hotel_temp <- complete(imp)
+  hotel <- rbind(hotel,hotel_temp) 
+}
+```
+
+After imputation, we will combine those divided dataset together to get a dataset without missing values
+
+```{r}
+# Combine to get the fully imputed dataset
+dt_rest <- select(dt,-c(user_location_country,orig_destination_distance,srch_destination_id,hotel_continent,hotel_country))
+```
+
+
+```{r}
+hotel_imp <- cbind(hotel,dt_rest)
+```
+
+Since there are only 177 NAs in **srch_ci** and 177 NAs in **srch_co**, we will drop those rows with NAs.
+
+```{r}
+# Drop NAs
+hotel_imp <- hotel_imp %>% drop_na(srch_ci,srch_co)
+```
+
+For the convenience of further analysis, we will export the dataset without missing value.
+```{r eval=FALSE, include=TRUE}
+# Save the imputed dataset
+# This dataset is larger than 25MB, so it cannot be uploaded to github
+write.csv(hotel_imp,file = "C:/Users/CH.Meng/Desktop/hotel_imp2.csv",row.names = F)
+```
